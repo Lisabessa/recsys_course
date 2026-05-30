@@ -62,11 +62,24 @@ def top_n_recommend(
     Returns:
         Список кортежей (movieId, avg_rating, rating_count, title).
     """
-    raise(NotImplementedError("Реализуйте функцию top_n_recommend"))
+    raitings_df, movies_df = load_data()
+    stats = (
+        raitings_df.groupby("movieId").agg({"rating": ["mean", "count"]}).reset_index()
+    )
+    stats.columns = ["movieId", "avg_rating", "rating_count"]
+    stats = stats[stats["rating_count"] >= min_ratings]
+    chosen = stats.sort_values(
+        ["avg_rating", "rating_count"], ascending=[False, False]
+    ).head(n_recommendations)
+    res = chosen.merge(movies_df[["movieId", "title"]], on="movieId")
+    return[
+        (row["movieId"], row["avg_rating"], row["rating_count"], row["title"])
+        for _, row in res.iterrows()
+    ]
 
 
 def evaluate_rec_systems(
-    user_id: int = 610, n_recommendations: int = 10, random_state: int = 42
+    user_id: int = 1, n_recommendations: int = 10, random_state: int = 42
 ) -> dict:
     """
     Оценивает эффективность базовых рекомендательных систем.
@@ -86,7 +99,20 @@ def evaluate_rec_systems(
     Returns:
         Словарь {'random_accuracy', 'popular_accuracy'}.
     """
-    raise(NotImplementedError("Реализуйте функцию evaluate_rec_systems"))
+    ratings_df, _ = load_data()
+    random_ids = random_recommend(
+        n_recommendations=n_recommendations, seed=random_state
+    )
+    popular_recs = top_n_recommend(n_recommendations=n_recommendations)
+    popular_ids = [rec[0] for rec in popular_recs]
+    user_rated_movies = ratings_df[ratings_df["userId"] == user_id]["movieId"].tolist()
+    relevant_items = set(user_rated_movies)
+    random_accuracy = 0.0
+    popular_accuracy = 0.0
+    if len(relevant_items) > 0:
+        random_accuracy = (len(set(random_ids) & relevant_items)) / n_recommendations
+        popular_accuracy = (len(set(popular_ids) & relevant_items)) / n_recommendations
+    return {"random_accuracy": random_accuracy, "popular_accuracy": popular_accuracy}
 
 
 if __name__ == "__main__":
