@@ -29,10 +29,16 @@ class ContentRecommender:
         self.movies_df = movies_df.copy()
         self.movies_df["genres"] = self.movies_df["genres"].fillna("")
         vectorizer = CountVectorizer(tokenizer=lambda s: s.split("|"), lowercase=False)
-        ###########################################################################
-        # TODO: Строим матрицу эмбеддингов для фильмов и сохраняем в self.embeddings                       
 
-        ###########################################################################
+        genre_matrix = vectorizer.fit_transform(self.movies_df["genres"]).toarray()
+        max_movie_id = int(self.movies_df["movieId"].max())
+        embeddings = np.zeros((max_movie_id + 1, genre_matrix.shape[1]), dtype=float)
+
+        for idx, row in self.movies_df.iterrows():
+            mid = int(row["movieId"])
+            embeddings[mid] = genre_matrix[idx]                      
+        
+        self.embeddings = embeddings
         
 
     def predict_rating(self, user_id: int, item_id: int, k: int = 5) -> float:
@@ -56,7 +62,38 @@ class ContentRecommender:
         Returns:
             float: предсказанный рейтинг
         """
-        raise NotImplementedError("Реализуйте функцию predict_rating")
+        target_vec = self.embeddings[item_id]
+
+        user_ratings = self.ui_matrix[user_id]
+        rated_indicies = np.where(user_ratings > 0)[0]
+        if rated_indicies.size == 0:
+            return 0.0
+        
+        rated_vecs = self.embeddings[rated_indicies]
+        norms = np.linalg.norm(rated_vecs, axis=1)
+        target_norm = np.linalg.norm(target_vec)
+
+        valid = norms > 0
+        if not np.any(valid):
+            return 0.0
+        
+        rated_indicies = rated_indicies[valid]
+        rated_vecs = rated_vecs[valid]
+        norms = norms[valid]
+        similarities = (rated_vecs @ target_vec) / (norms * target_norm + 1e-9)
+
+        topk = min(k, similarities.shape[0])
+        idx_sorted = np.argsort(similarities)[::-1][:topk]
+        sim_topk = similarities[idx_sorted]
+        rating_topk = user_ratings[rated_indicies[idx_sorted]]
+
+        denom = np.sum(np.abs(sim_topk))
+        if denom == 0:
+            return 0.0
+        pred = np.dot(sim_topk, rating_topk) / denom
+        pred = float(np.clip(pred, 0.0, 5.0))
+        return pred
+
 
     def predict_items_for_user(
         self, user_id: int, k: int = 5, n_recommendations: int = 5
@@ -70,7 +107,46 @@ class ContentRecommender:
         4) Для всех фильмов, которые пользователь не оценил, считаем сходство с профилем.
         5) Сортируем по убыванию сходства и возвращаем top-n.
         """
-        raise NotImplementedError("Реализуйте функцию predict_items_for_user")
+        n_users, n_items = self.ui_matrix.shape
+        if user_id < 0 or user_id >= n_users:
+            raise IndexError("user_id out of bounds")
+        elif k <= 0:
+            raise ValueError("k must be positive")
+        elif n_recommendations <= 0:
+            raise ValueError("n_recommendations must be > 0")
+        
+        user_ratings = self.ui_matrix[user_id]
+        rated_indicies = np.where(user_ratings > 0)[0]
+        if rated_indicies.size == 0:
+            return []
+        
+        rated_vecs = self.embeddings[rated_indicies]
+        weights = user_ratings[rated_indicies]
+        if np.sum(weights) == 0:
+            return []
+        
+        user_profile = np.average(rated_vecs, axis=0, weights=weights)
+        profile_norm = np.linalg.norm(user_profile)
+        if profile_norm == 0:
+            return []
+        
+        unseen_indicies = np.where(user_ratings == 0)[0]
+        if unseen_indicies.size == 0:
+            return []
+        
+        unseen_vecs = self.embeddings[unseen_indicies]
+        unseen_norms = np.linalg.norm(unseen_vecs, axis=1)
+        valid = unseen_norms > 0
+        if not np.any(valid):
+            return []
+        
+        valid_indicies = unseen_indicies[valid]
+        valid_vecs = unseen_vecs[valid]
+        valid_norms = unseen_norms[valid]
+
+        sims = (valid_vecs @ user_profile) / (valid_norms * profile_norm + 1e-9)
+        top = np.argsort(sims)[::-1][:n_recommendations]
+        return valid_indicies[top].tolist()
 
 
 # Пример использования для дебага:
