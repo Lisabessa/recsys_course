@@ -42,7 +42,12 @@ def jaccard_similarity(a: np.array, b: np.array) -> float:
 
     Это значение в диапазоне [0,1].
     """
-    raise(NotImplementedError("Реализуйте функцию jaccard_similarity"))
+    a, b = a > 0, b > 0
+    intersection = np.sum(np.logical_and(a, b))
+    union = np.sum(np.logical_or(a, b))
+    if union == 0:
+        return None
+    return float(intersection / union)
 
 
 def build_user_user_matrix(user_item_matrix: np.ndarray) -> np.ndarray:
@@ -65,7 +70,22 @@ def build_user_user_matrix(user_item_matrix: np.ndarray) -> np.ndarray:
     Returns:
         Матрица схожести Жаккара (n_users, n_users).
     """
-    raise(NotImplementedError("Реализуйте функцию build_user_user_matrix"))
+    # n_users, n_items = user_item_matrix.shape
+    # user_user_matrix = np.eye(n_users, n_users)
+    # for user_i in range(n_users):
+    #     for user_j in range(n_users):
+    #         user_user_matrix[user_i, user_j] = jaccard_similarity(user_item_matrix[user_i], user_item_matrix[user_j])
+    # return user_user_matrix
+
+    X = (user_item_matrix > 0).astype(int)
+    intersection = X @ X.T
+    sums = X.sum(axis=1)
+    union = sums[:, None] + sums[None, :] - intersection
+    np.fill_diagonal(union, 1)
+    np.fill_diagonal(intersection, 1)
+    res_matrix = intersection / union
+    return res_matrix
+
 
 
 def predict_rating(
@@ -98,7 +118,25 @@ def predict_rating(
     Returns:
         Предсказанный рейтинг (float).
     """
-    raise(NotImplementedError("Реализуйте функцию predict_rating"))
+    ratings_of_item = user_item_matrix[:, item_id]
+    mask = ratings_of_item > 0
+    if not mask.any():
+        print(f"Nobody rated movie {item_id} - {id_to_movie(item_id)}")
+        return 0.0
+    similarities = user_user_matrix[user_id]
+    filtered_similarities = similarities[mask]
+    filtered_ratings = ratings_of_item[mask]
+    sorted_indices = np.argsort(filtered_similarities)[::-1]
+    k = min(topk, len(sorted_indices))
+    top_k_indicies = sorted_indices[:k]
+    sim_topk = filtered_similarities[top_k_indicies]
+    rat_topk = filtered_ratings[top_k_indicies]
+    weighted_sum = np.sum(sim_topk * rat_topk)
+    sum_sim = np.sum(sim_topk)
+    if sum_sim == 0:
+        return 0.0
+    return float(weighted_sum / sum_sim)
+
 
 
 def predict_items_for_user(
@@ -133,7 +171,31 @@ def predict_items_for_user(
     Returns:
         Список рекомендованных индексов фильмов (item_id).
     """
-    raise(NotImplementedError("Реализуйте функцию predict_items_for_user"))
+    similarities = user_user_matrix[user_id]
+    similarities_copy = similarities.copy()
+    similarities_copy[user_id] = -1
+    top_r_users = np.argsort(similarities_copy)[-r:]
+
+    high_rated_movies = {}
+    for neighbor in top_r_users:
+        neighbor_ratings = user_item_matrix[neighbor]
+        highly_rated_indicies = np.where(neighbor_ratings >= 4.0)[0]
+        for movie_idx in highly_rated_indicies:
+            high_rated_movies.setdefault(movie_idx, []).append(
+                neighbor_ratings[movie_idx]
+            )
+        
+    user_rated = user_item_matrix[user_id] > 0
+    candidates = {
+        movie_idx: np.mean(ratings)
+        for movie_idx, ratings in high_rated_movies.items()
+        if not user_rated[movie_idx]
+    }
+
+    sorted_candidates = sorted(candidates.items(), key=lambda x: x[1], reverse=True)
+    recommended_items = [int(movie_idx) for movie_idx, score in sorted_candidates[:k]]
+    return recommended_items
+
 
 
 if __name__ == "__main__":
